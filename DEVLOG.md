@@ -1,5 +1,37 @@
 # AkiBloom 开发日志
 
+## M1–M3 · 2026-09-27——功能齐 + 定稿 + 投稿就绪（提前 15 天）
+
+### 完成
+
+- **杂交接线**：tag（湿润/颗粒/呼吸感）/ 变异量 / 种子三参数 + `manual_variate` 纯函数 + 
+  `resolve_variate_from(cultivate_on, manual, active)` 纯函数（lib 层可测，GUI worker 复用）。
+- **培育**：cultivate.rs 自 AkiGraft 单向复制（带 6 项单测）；walker 状态进入渲染指纹——
+  下一变异/保留/丢弃/地图回溯任一操作 → 自动重渲染对应变体（确定性：同状态=同渲染）。
+- **音色地图**：种子×变异量平面足迹图（●保留 ○尝试 ◉基准 ◎试听中），点圆点回溯。
+- **TUNE**：±1 半音微调（`effective_root` = root + tune，分数半音进 12-TET 换算）。
+- **导出**：⇩ 按钮在 worker 线程弹保存框写 32f wav（可作 AkiGraft 母本）。
+- **预设**：原种/均衡嫁接/深度嫁接/湿润之雾/颗粒碎化/呼吸氛围（双语）。
+- **UI 分区定稿**：①种子 → ②生长 → ③杂交 → ④培育（含地图）→ ⑤演奏（含导出+琴键）。
+- **M3 交付物**：双语 README（EN 前置）、GPL-3.0 LICENSE、package.ps1（zip 6.74MB）、
+  SUBMISSION.md（投稿文案+90 秒视频脚本+作者测试清单）。
+- **代码决策**：砍「变体索引」参数（渲染跟不上自动化扫动；地图回溯已覆盖），记入 PLAN v1.1。
+
+### 自测（全部通过）
+
+- **42/42 单元测试**：新增 resolve_variate 四态、pitch 分数半音、cultivate 复制件 6 项。
+- **离线数值自测**（scripts/verify_render.py，可重复跑）：标签方向性——湿润收高频
+  （差分能量 -30.6dB）< 呼吸（-25.3）< 颗粒（-25.2，亮 ≥1dB）；种子确定性——同种子
+  字节级相同、不同种子不同；全有限值。
+- **打包三产物 + standalone WASAPI 冒烟存活**。
+
+### 移交作者（SUBMISSION.md 清单）
+
+REAPER 挂轨实测、真实 Botanica 种子演示、视频录制、投稿操作（当天仓库切 public）。
+
+
+---
+
 ## M0 · 2026-09-26——内核日：能弹（当日完成，提前于 09-30 检查点）
 
 ### 完成
@@ -49,7 +81,8 @@ cd AkiBloom
 cargo test --release
 cargo xtask bundle akibloom --release
 powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1
-targeteleasekibloom_demo.exe tmp/seed_dark.wav tmp/seed_bright.wav tmp/variant.wav --alpha 0.8
+target
+eleasekibloom_demo.exe tmp/seed_dark.wav tmp/seed_bright.wav tmp/variant.wav --alpha 0.8
 ```
 
 

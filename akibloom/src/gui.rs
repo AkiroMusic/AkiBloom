@@ -1,15 +1,19 @@
 //! AkiBloom editor — mint-fresh botanical UI (same palette as AkiGraft).
 //!
 //! Layout follows the workflow in order: ① 种子 SOURCE → ② 生长 GROW →
-//! ③ 演奏 PLAY. Same interaction conventions as AkiGraft: circular dials
-//! dragged horizontally (double-click resets, Shift is fine), file loading
-//! and variant rendering run on worker threads — the modal rfd dialog must
-//! never open on the baseview window thread, and rendering must never touch
-//! the audio thread.
+//! ③ 杂交 HYBRIDIZE → ④ 培育 CULTIVATE → ⑤ 演奏 PLAY. Same interaction
+//! conventions as AkiGraft: circular dials dragged horizontally (double-click
+//! resets, Shift is fine), file loading and variant rendering run on worker
+//! threads — the modal rfd dialog must never open on the baseview window
+//! thread, and rendering must never touch the audio thread.
 //!
 //! The virtual keyboard is a first-class control: no MIDI device is needed
 //! to audition the grown timbre. Click (or drag across) keys to play; the
 //! audio thread polls the shared held-note slot.
+//!
+//! Every control that changes what the variant *is* (seeds, side, α, the
+//! resolved variation state) feeds a fingerprint; a change spawns a render
+//! worker that publishes a fresh `Arc<PlayableVariant>`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,9 +25,10 @@ use nih_plug_egui::egui::{
 };
 use nih_plug_egui::{create_egui_editor, EguiState};
 
+use crate::cultivate::Cultivate;
 use crate::render::{self, RenderJob};
 use crate::seeds::{self, SharedSeeds, Slot};
-use crate::{AkiBloomParams, SeedSide, SharedVariant, VirtualNote};
+use crate::{AkiBloomParams, SeedSide, SharedVariant, VariateTag, VirtualNote};
 
 // ── Palette (mint-fresh-botanica, identical to AkiGraft) ────────────────
 
@@ -35,7 +40,7 @@ const CARD_STROKE: Color32 = Color32::from_rgb(0xC9, 0xDC, 0xCE); // 细线
 const MINT: Color32 = Color32::from_rgb(0xB5, 0xD7, 0xC3); // 浅薄荷青 · accent
 const GRAY_GREEN: Color32 = Color32::from_rgb(0x8F, 0xA8, 0x9A); // 灰绿
 
-const DEFAULT_SIZE: (u32, u32) = (980, 700);
+const DEFAULT_SIZE: (u32, u32) = (980, 860);
 
 /// Status text shared between the GUI and load/render workers.
 pub type SharedStatus = Arc<Mutex<String>>;
@@ -47,6 +52,7 @@ pub struct EditorState {
     pub variant: SharedVariant,
     pub status: SharedStatus,
     pub virtual_note: VirtualNote,
+    pub cultivate: Arc<parking_lot::RwLock<Cultivate>>,
     /// Set while a render worker is running (GUI skips spawning).
     pub render_in_flight: Arc<AtomicBool>,
     /// Fingerprint of everything a render depends on.
@@ -59,6 +65,7 @@ pub fn create(
     variant: SharedVariant,
     status: SharedStatus,
     virtual_note: VirtualNote,
+    cultivate: Arc<parking_lot::RwLock<Cultivate>>,
 ) -> Option<Box<dyn Editor>> {
     let egui_state = EguiState::from_size(DEFAULT_SIZE.0, DEFAULT_SIZE.1);
 
@@ -70,12 +77,15 @@ pub fn create(
             variant,
             status,
             virtual_note,
+            cultivate,
             render_in_flight: Arc::new(AtomicBool::new(false)),
             last_render_key: 0,
         },
-        |ctx, _state| {
+        |ctx, state| {
             load_fonts(ctx);
             configure_visuals(ctx);
+            // Entropy for the walker's RNG, once per editor.
+            state.cultivate.write().reseed_from_clock();
         },
         move |ctx, setter, state| {
             egui::CentralPanel::default().show(ctx, |ui| {
@@ -88,35 +98,51 @@ pub fn create(
 
 // ── Render scheduling ───────────────────────────────────────────────────
 
-/// Spawn a render worker whenever anything the variant depends on changed
-/// (seed files, source side, α in 1% steps). Skipped while a worker is
-/// already running — when it finishes, the next frame re-checks.
-fn maybe_spawn_render(st: &mut EditorState) {
-    let key = {
-        let a = st.params.seed_a_path.lock().clone();
-        let b = st.params.seed_b_path.lock().clone();
-        let mut h = 0xcbf2_9ce4_8422_2325u64; // FNV-1a
-        for byte in a.bytes().chain(b.bytes()).chain(
-            [
-                st.params.side.value() as u8,
-                (st.params.alpha.value() * 100.0).round() as u8,
-            ]
-            .iter()
-            .copied(),
-        ) {
-            h ^= byte as u64;
+/// FNV-1a over everything the rendered variant depends on. The variation is
+/// quantized (α to 1%, amount to 1%) so smoothing doesn't spam renders.
+fn render_key(st: &EditorState) -> (u64, bool) {
+    let a = st.params.seed_a_path.lock().clone();
+    let b = st.params.seed_b_path.lock().clone();
+    let side = st.params.side.value();
+    let alpha = st.params.alpha.value();
+    let cultivating = st.params.cultivate_on.value();
+    let variate = crate::resolve_variate_from(
+        cultivating,
+        crate::manual_variate(&st.params),
+        {
+            let c = st.cultivate.read();
+            c.active()
+        },
+    );
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |bytes: &[u8]| {
+        for byte in bytes {
+            h ^= *byte as u64;
             h = h.wrapping_mul(0x1000_0000_01b3);
         }
-        h
     };
+    mix(a.as_bytes());
+    mix(b.as_bytes());
+    mix(&[side as u8, (alpha * 100.0).round() as u8, cultivating as u8]);
+    if let Some(v) = variate {
+        mix(&[v.tag, (v.amount * 100.0).round() as u8]);
+        mix(&v.seed.to_le_bytes());
+    }
+    (h, cultivating)
+}
+
+/// Spawn a render worker whenever anything the variant depends on changed.
+/// Skipped while a worker is already running — the next frame re-checks.
+fn maybe_spawn_render(st: &mut EditorState) {
+    let (key, cultivating) = render_key(st);
     if key == st.last_render_key || st.render_in_flight.load(Ordering::SeqCst) {
         return;
     }
     st.last_render_key = key;
-    spawn_render(st);
+    spawn_render(st, cultivating);
 }
 
-fn spawn_render(st: &mut EditorState) {
+fn spawn_render(st: &mut EditorState, cultivating: bool) {
     st.render_in_flight.store(true, Ordering::SeqCst);
     {
         let mut s = st.status.lock().unwrap();
@@ -129,6 +155,8 @@ fn spawn_render(st: &mut EditorState) {
     let in_flight = st.render_in_flight.clone();
     let side = st.params.side.value();
     let alpha = st.params.alpha.value();
+    let cultivate = st.cultivate.clone();
+    let params = st.params.clone();
 
     std::thread::spawn(move || {
         let (source, donor) = {
@@ -142,15 +170,25 @@ fn spawn_render(st: &mut EditorState) {
             in_flight.store(false, Ordering::SeqCst);
             return;
         };
+        let variate = crate::resolve_variate_from(
+            cultivating,
+            crate::manual_variate(&params),
+            cultivate.read().active(),
+        );
         let job = RenderJob {
             source: &source,
             donor: donor.as_deref(),
             alpha,
-            variate: None,
+            variate,
         };
         let variant = Arc::new(render::render_variant(job));
+        let has_var = variate.is_some();
         *variant_slot.write() = Some(variant);
-        *status.lock().unwrap() = "音色已生长 · 点击下方琴键试听".to_owned();
+        *status.lock().unwrap() = if has_var {
+            "音色已生长 · 点击下方琴键试听".to_owned()
+        } else {
+            format!("音色已就绪（α={:.0}%）· 点击琴键试听", alpha * 100.0)
+        };
         in_flight.store(false, Ordering::SeqCst);
     });
 }
@@ -178,6 +216,8 @@ fn render(ui: &mut egui::Ui, setter: &ParamSetter, st: &mut EditorState) {
             );
         });
     });
+    ui.add_space(4.0);
+    preset_row(ui, setter, &st.params);
     ui.add_space(4.0);
 
     // ── ① 种子 SOURCE ───────────────────────────────────────────────
@@ -239,10 +279,170 @@ fn render(ui: &mut egui::Ui, setter: &ParamSetter, st: &mut EditorState) {
         },
     );
 
-    // ── ③ 演奏 PLAY ─────────────────────────────────────────────────
+    let cultivating = st.params.cultivate_on.value();
+
+    // ── ③ 杂交 HYBRIDIZE（手动变异）────────────────────────────────
     section(
         ui,
-        "③ 演奏 · PLAY",
+        "③ 杂交 · HYBRIDIZE",
+        "按方向标签做确定性变异（同一种子 = 同一结果），与生长叠加生效",
+        |ui| {
+            ui.add_enabled_ui(!cultivating, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("方向").size(12.5).color(INK));
+                    for (variant, label) in [
+                        (VariateTag::Wet, "湿润 Wet"),
+                        (VariateTag::Grainy, "颗粒 Grainy"),
+                        (VariateTag::Breath, "呼吸感 Breath"),
+                    ] {
+                        let active = st.params.tag.value() == variant;
+                        let btn = ui
+                            .add(
+                                egui::Button::new(RichText::new(label).color(if active {
+                                    MINT_BG
+                                } else {
+                                    INK
+                                }))
+                                .fill(if active { INK } else { CARD_BG })
+                                .corner_radius(CornerRadius::same(9)),
+                            )
+                            .on_hover_text(match variant {
+                                VariateTag::Wet => "湿润：中低频更饱满、高频收敛，缓慢的液态流动感",
+                                VariateTag::Grainy => "颗粒：高频提亮 + 频谱梳状纹理，细碎的颗粒闪光感",
+                                VariateTag::Breath => "呼吸感：轻微高频气声，叠加缓慢的音量起伏（像呼吸）",
+                            });
+                        if btn.clicked() {
+                            setter.begin_set_parameter(&st.params.tag);
+                            setter.set_parameter(&st.params.tag, variant);
+                            setter.end_set_parameter(&st.params.tag);
+                        }
+                    }
+
+                    param_knob(
+                        ui,
+                        setter,
+                        &st.params.var_amount,
+                        52.0,
+                        RichText::new("变异量").size(12.5).color(INK),
+                        "变异深度：0% = 不变异。横向拖动，双击恢复默认",
+                    );
+
+                    ui.label(
+                        RichText::new(format!("种子 {}", st.params.seed.value()))
+                            .size(12.0)
+                            .color(BODY),
+                    );
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("⟳ 新变异").color(INK))
+                                .fill(MINT)
+                                .corner_radius(CornerRadius::same(9)),
+                        )
+                        .on_hover_text("换一个随机种子——同样的种子永远得到同样的变异")
+                        .clicked()
+                    {
+                        let new_seed = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| (d.subsec_nanos() as i32).max(1))
+                            .unwrap_or(1);
+                        setter.begin_set_parameter(&st.params.seed);
+                        setter.set_parameter(&st.params.seed, new_seed);
+                        setter.end_set_parameter(&st.params.seed);
+                    }
+                });
+            });
+            if cultivating {
+                ui.label(
+                    RichText::new("培育模式进行中——手动杂交控件暂时交由培育接管")
+                        .size(11.0)
+                        .color(BODY),
+                );
+            }
+        },
+    );
+
+    // ── ④ 培育 CULTIVATE ────────────────────────────────────────────
+    section(
+        ui,
+        "④ 培育 · CULTIVATE",
+        "自动漫步探索：⟳ 生成变异 → 弹琴试听 → 👍保留 / ✗丢弃，地图可点回任何一步",
+        |ui| {
+            ui.horizontal(|ui| {
+                let on = cultivating;
+                let toggle = ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(if on { "● 培育中" } else { "○ 培育模式" }).color(
+                                if on { MINT_BG } else { INK },
+                            ),
+                        )
+                        .fill(if on { INK } else { CARD_BG })
+                        .corner_radius(CornerRadius::same(9)),
+                    )
+                    .on_hover_text("开启后，培育接管③的变异，自动在音色空间里漫步探索");
+                if toggle.clicked() {
+                    setter.begin_set_parameter(&st.params.cultivate_on);
+                    setter.set_parameter(&st.params.cultivate_on, !on);
+                    setter.end_set_parameter(&st.params.cultivate_on);
+                    if !on {
+                        st.cultivate.write().reseed_from_clock();
+                    }
+                }
+
+                param_knob(
+                    ui,
+                    setter,
+                    &st.params.walk,
+                    52.0,
+                    RichText::new("漫步幅度").size(12.5).color(INK),
+                    "每一步变异的探索范围：越大跳得越远。横向拖动，双击恢复默认",
+                );
+
+                ui.add_enabled_ui(on, |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("⟳ 下一变异").color(INK))
+                                .fill(CARD_BG)
+                                .corner_radius(CornerRadius::same(9)),
+                        )
+                        .on_hover_text("生成并试听下一步变异（弹琴试听后再保留/丢弃）")
+                        .clicked()
+                    {
+                        st.cultivate.write().next_candidate();
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("👍 保留").color(MINT_BG))
+                                .fill(INK)
+                                .corner_radius(CornerRadius::same(9)),
+                        )
+                        .on_hover_text("当前变异不错：设为新基准，并让漫步偏向这个方向")
+                        .clicked()
+                    {
+                        st.cultivate.write().keep();
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("✗ 丢弃").color(INK))
+                                .fill(CARD_BG)
+                                .corner_radius(CornerRadius::same(9)),
+                        )
+                        .on_hover_text("不喜欢：退回上一个保留的基准")
+                        .clicked()
+                    {
+                        st.cultivate.write().discard();
+                    }
+                });
+            });
+
+            timbre_map(ui, st);
+        },
+    );
+
+    // ── ⑤ 演奏 PLAY ─────────────────────────────────────────────────
+    section(
+        ui,
+        "⑤ 演奏 · PLAY",
         "点击琴键试听（拖动可滑音），或接入 MIDI 键盘；根音 = 音色原调",
         |ui| {
             ui.horizontal(|ui| {
@@ -257,11 +457,31 @@ fn render(ui: &mut egui::Ui, setter: &ParamSetter, st: &mut EditorState) {
                 param_knob(
                     ui,
                     setter,
+                    &st.params.tune,
+                    56.0,
+                    RichText::new("微调 Tune").size(12.5).color(INK),
+                    "相对根音的微调（±1 个半音），用于对齐音高。横向拖动，双击归零",
+                );
+                param_knob(
+                    ui,
+                    setter,
                     &st.params.gain,
                     56.0,
                     RichText::new("输出 Output").size(12.5).color(INK),
                     "输出音量。横向拖动，双击恢复 0 dB",
                 );
+                ui.add_space(10.0);
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new("⇩ 导出 Export").color(INK))
+                            .fill(MINT)
+                            .corner_radius(CornerRadius::same(9)),
+                    )
+                    .on_hover_text("把当前音色导出为 wav（可直接当 AkiGraft 的母本使用）")
+                    .clicked()
+                {
+                    spawn_export(st);
+                }
             });
             ui.add_space(4.0);
             virtual_keyboard(ui, st);
@@ -276,12 +496,251 @@ fn render(ui: &mut egui::Ui, setter: &ParamSetter, st: &mut EditorState) {
         }
         ui.label(
             RichText::new(
-                "操作：旋钮横向拖动 · Shift 微调 · 双击恢复默认 · α=0 原声 · 键盘 C3–C5 点击/拖动演奏",
+                "操作：旋钮横向拖动 · Shift 微调 · 双击恢复默认 · α=0 原声 · 同种子=同变异 · 键盘 C3–C5 点击/拖动",
             )
             .size(10.5)
             .color(BODY),
         );
     });
+}
+
+// ── Timbre map (培育地图) ───────────────────────────────────────────────
+
+/// The cultivate map: every landed step as a dot over the seed×amount plane.
+/// Click a dot to roll the base back to it (snapshot rollback) — the change
+/// re-renders the variant through the fingerprint.
+fn timbre_map(ui: &mut egui::Ui, st: &mut EditorState) {
+    let height = 168.0;
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), height),
+        Sense::click_and_drag(),
+    );
+    let painter = ui.painter_at(rect);
+
+    painter.rect_filled(rect, CornerRadius::same(10), MINT_BG);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(10),
+        Stroke::new(1.0, CARD_STROKE),
+        egui::StrokeKind::Middle,
+    );
+
+    for i in 1..8 {
+        let x = rect.left() + rect.width() * (i as f32 / 8.0);
+        painter.line_segment(
+            [egui::pos2(x, rect.top() + 4.0), egui::pos2(x, rect.bottom() - 4.0)],
+            Stroke::new(0.5, CARD_STROKE),
+        );
+    }
+    for i in 1..4 {
+        let y = rect.top() + rect.height() * (i as f32 / 4.0);
+        painter.line_segment(
+            [egui::pos2(rect.left() + 4.0, y), egui::pos2(rect.right() - 4.0, y)],
+            Stroke::new(0.5, CARD_STROKE),
+        );
+    }
+
+    painter.text(
+        egui::pos2(rect.right() - 6.0, rect.bottom() - 22.0),
+        egui::Align2::RIGHT_BOTTOM,
+        "种子 →",
+        egui::TextStyle::Small.resolve(ui.style()),
+        BODY,
+    );
+    painter.text(
+        egui::pos2(rect.left() + 6.0, rect.top() + 6.0),
+        egui::Align2::LEFT_TOP,
+        "↑ 变异量",
+        egui::TextStyle::Small.resolve(ui.style()),
+        BODY,
+    );
+
+    let (history, candidate, base) = {
+        let c = st.cultivate.read();
+        (c.history.clone(), c.candidate, c.base)
+    };
+
+    let to_pos = |state: crate::graft::VariateState| {
+        let fx = (state.seed % 10_007) as f32 / 10_007.0;
+        let x = rect.left() + 14.0 + fx * (rect.width() - 28.0);
+        let y = rect.top() + 14.0 + (1.0 - state.amount) * (rect.height() - 28.0);
+        egui::pos2(x, y)
+    };
+
+    let mut dots: Vec<(egui::Pos2, usize)> = Vec::new();
+    for step in history.iter() {
+        let p = to_pos(step.state);
+        dots.push((p, step.n));
+        let color = if step.kept { INK } else { GRAY_GREEN };
+        if step.kept {
+            painter.circle_filled(p, 3.5, color);
+        } else {
+            painter.circle_stroke(p, 3.0, Stroke::new(1.2, color));
+        }
+    }
+    // Current base: mint disc with ink outline.
+    let base_pos = to_pos(base);
+    painter.circle_filled(base_pos, 5.0, MINT);
+    painter.circle_stroke(base_pos, 5.5, Stroke::new(1.5, INK));
+    // Auditioned candidate: hollow bright ring.
+    if let Some(c) = candidate {
+        let p = to_pos(c);
+        painter.circle_stroke(p, 5.5, Stroke::new(2.0, INK));
+    }
+
+    // Click → rollback to the nearest landed step within range.
+    if response.clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let mut best: Option<(f32, usize)> = None;
+            for (p, n) in &dots {
+                let d = p.distance(pos);
+                if d < 12.0 && best.map(|(bd, _)| d < bd).unwrap_or(true) {
+                    best = Some((d, *n));
+                }
+            }
+            if let Some((_, n)) = best {
+                st.cultivate.write().rollback(n);
+                *st.status.lock().unwrap() = format!("已回溯到第 {n} 步（音色重新生长中）");
+            }
+        }
+    }
+
+    painter.text(
+        egui::pos2(rect.left() + 8.0, rect.bottom() - 8.0),
+        egui::Align2::LEFT_BOTTOM,
+        "● 已保留　○ 尝试过　◉ 当前基准　◎ 试听中　点击圆点可回溯",
+        egui::TextStyle::Small.resolve(ui.style()),
+        BODY,
+    );
+}
+
+// ── Export ──────────────────────────────────────────────────────────────
+
+/// Save-dialog + WAV export on a worker (never rfd on the window thread).
+fn spawn_export(st: &mut EditorState) {
+    let variant = st.variant.read().clone();
+    let status = st.status.clone();
+    std::thread::spawn(move || {
+        let Some(variant) = variant else {
+            *status.lock().unwrap() = "还没有可导出的音色——先加载种子生长一个".to_owned();
+            return;
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rfd::FileDialog::new()
+                .add_filter("WAV audio", &["wav"])
+                .set_file_name("AkiBloom-timbre.wav")
+                .save_file()
+        }))
+        .unwrap_or(None);
+        let Some(path) = result else {
+            return; // cancelled
+        };
+        match render::write_variant(&path, &variant) {
+            Ok(()) => {
+                *status.lock().unwrap() =
+                    format!("已导出 {}（可作 AkiGraft 母本）", path.display());
+            }
+            Err(e) => {
+                *status.lock().unwrap() = format!("导出失败：{e}");
+            }
+        }
+    });
+}
+
+// ── Factory presets ─────────────────────────────────────────────────────
+
+/// Six bilingual factory presets — one-click starting points for the demo.
+fn preset_row(ui: &mut egui::Ui, setter: &ParamSetter, p: &AkiBloomParams) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("预设 Presets:").size(11.5).color(BODY));
+        let presets: [(&str, &str, fn(&ParamSetter, &AkiBloomParams)); 6] = [
+            ("原种", "Seed As-Is", apply_seed_asis),
+            ("均衡嫁接", "Balanced Graft", apply_balanced),
+            ("深度嫁接", "Deep Graft", apply_deep),
+            ("湿润之雾", "Wet Haze", apply_wet_haze),
+            ("颗粒碎化", "Grain Crush", apply_grain_crush),
+            ("呼吸氛围", "Breath Pad", apply_breath_pad),
+        ];
+        for (zh, en, apply) in presets {
+            if ui
+                .add(
+                    egui::Button::new(RichText::new(format!("{zh} {en}")).size(10.5).color(INK))
+                        .fill(CARD_BG)
+                        .corner_radius(CornerRadius::same(8)),
+                )
+                .on_hover_text(format!("一键切换预设：{zh} · {en}"))
+                .clicked()
+            {
+                apply(setter, p);
+            }
+        }
+    });
+}
+
+fn set_f32(setter: &ParamSetter, param: &nih_plug::prelude::FloatParam, v: f32) {
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, v);
+    setter.end_set_parameter(param);
+}
+
+fn set_i32(setter: &ParamSetter, param: &nih_plug::prelude::IntParam, v: i32) {
+    setter.begin_set_parameter(param);
+    setter.set_parameter(param, v);
+    setter.end_set_parameter(param);
+}
+
+fn preset_common_off(setter: &ParamSetter, p: &AkiBloomParams) {
+    setter.begin_set_parameter(&p.cultivate_on);
+    setter.set_parameter(&p.cultivate_on, false);
+    setter.end_set_parameter(&p.cultivate_on);
+}
+
+fn apply_seed_asis(setter: &ParamSetter, p: &AkiBloomParams) {
+    set_f32(setter, &p.alpha, 0.0);
+    set_f32(setter, &p.var_amount, 0.0);
+    preset_common_off(setter, p);
+}
+
+fn apply_balanced(setter: &ParamSetter, p: &AkiBloomParams) {
+    set_f32(setter, &p.alpha, 0.5);
+    set_f32(setter, &p.var_amount, 0.0);
+    preset_common_off(setter, p);
+}
+
+fn apply_deep(setter: &ParamSetter, p: &AkiBloomParams) {
+    set_f32(setter, &p.alpha, 0.9);
+    set_f32(setter, &p.var_amount, 0.0);
+    preset_common_off(setter, p);
+}
+
+fn apply_wet_haze(setter: &ParamSetter, p: &AkiBloomParams) {
+    set_f32(setter, &p.alpha, 0.35);
+    set_f32(setter, &p.var_amount, 0.35);
+    setter.begin_set_parameter(&p.tag);
+    setter.set_parameter(&p.tag, VariateTag::Wet);
+    setter.end_set_parameter(&p.tag);
+    set_i32(setter, &p.seed, 7);
+    preset_common_off(setter, p);
+}
+
+fn apply_grain_crush(setter: &ParamSetter, p: &AkiBloomParams) {
+    set_f32(setter, &p.alpha, 0.3);
+    set_f32(setter, &p.var_amount, 0.5);
+    setter.begin_set_parameter(&p.tag);
+    setter.set_parameter(&p.tag, VariateTag::Grainy);
+    setter.end_set_parameter(&p.tag);
+    set_i32(setter, &p.seed, 11);
+    preset_common_off(setter, p);
+}
+
+fn apply_breath_pad(setter: &ParamSetter, p: &AkiBloomParams) {
+    set_f32(setter, &p.alpha, 0.45);
+    set_f32(setter, &p.var_amount, 0.45);
+    setter.begin_set_parameter(&p.tag);
+    setter.set_parameter(&p.tag, VariateTag::Breath);
+    setter.end_set_parameter(&p.tag);
+    set_i32(setter, &p.seed, 23);
+    preset_common_off(setter, p);
 }
 
 // ── Virtual keyboard ────────────────────────────────────────────────────
@@ -311,7 +770,6 @@ fn virtual_keyboard(ui: &mut egui::Ui, st: &mut EditorState) {
 
     let held = *st.virtual_note.lock().unwrap();
 
-    // White keys first, then blacks overlay them.
     let whites: Vec<u8> = (LOW..=HIGH).filter(|n| is_white(*n)).collect();
     let w_w = rect.width() / whites.len() as f32;
     let mut white_rects: Vec<(u8, egui::Rect)> = Vec::new();
@@ -342,8 +800,6 @@ fn virtual_keyboard(ui: &mut egui::Ui, st: &mut EditorState) {
         if is_white(note) {
             continue;
         }
-        // A black key sits on the boundary between its lower white neighbor
-        // and the next white key.
         if let Some((_, below)) = white_rects.iter().rev().find(|(n, _)| *n < note) {
             let x = below.right() - w_w * 0.28;
             let r = egui::Rect::from_min_size(
@@ -362,7 +818,6 @@ fn virtual_keyboard(ui: &mut egui::Ui, st: &mut EditorState) {
         );
     }
 
-    // Key labels on C notes.
     for (note, r) in &white_rects {
         if note % 12 == 0 {
             painter.text(

@@ -13,6 +13,7 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+pub mod cultivate;
 pub mod graft;
 mod gui;
 pub mod mel;
@@ -23,6 +24,8 @@ pub mod stft;
 pub mod voices;
 pub mod wav;
 
+use cultivate::Cultivate;
+use graft::VariateState;
 use render::PlayableVariant;
 use seeds::SharedSeeds;
 use voices::Voices;
@@ -53,6 +56,28 @@ impl SeedSide {
     }
 }
 
+/// The three variation directions (matches `VariateState.tag` indices) —
+/// the paper's three hybridize words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum VariateTag {
+    #[name = "湿润 Wet"]
+    Wet,
+    #[name = "颗粒 Grainy"]
+    Grainy,
+    #[name = "呼吸感 Breath"]
+    Breath,
+}
+
+impl VariateTag {
+    pub fn index(self) -> u8 {
+        match self {
+            Self::Wet => 0,
+            Self::Grainy => 1,
+            Self::Breath => 2,
+        }
+    }
+}
+
 /// The GUI's virtual keyboard: the currently held note, if any. Written by
 /// the editor, polled by the audio thread.
 pub type VirtualNote = Arc<Mutex<Option<u8>>>;
@@ -66,6 +91,9 @@ pub struct AkiBloom {
     variant: SharedVariant,
     /// Status line shared with load/render workers (GUI + workers only).
     status: Arc<Mutex<String>>,
+    /// The cultivate walker, shared between the GUI (mutations) and render
+    /// scheduling (reads `active()`).
+    cultivate: Arc<parking_lot::RwLock<Cultivate>>,
     /// The GUI keyboard's held note.
     virtual_note: VirtualNote,
     /// Last virtual note the audio thread saw (for on/off transitions).
@@ -88,9 +116,28 @@ pub struct AkiBloomParams {
     /// MIDI note that plays the variant at its native pitch.
     #[id = "root"]
     pub root: IntParam,
+    /// Fine tuning around the root, ±1 semitone.
+    #[id = "tune"]
+    pub tune: FloatParam,
     /// Output level.
     #[id = "gain"]
     pub gain: FloatParam,
+
+    /// Manual variation direction (hybridize).
+    #[id = "tag"]
+    pub tag: EnumParam<VariateTag>,
+    /// Manual variation depth.
+    #[id = "varamount"]
+    pub var_amount: FloatParam,
+    /// Manual variation seed — same seed, same variation.
+    #[id = "seed"]
+    pub seed: IntParam,
+    /// Cultivate walker mode: the walker drives the variation transform.
+    #[id = "culton"]
+    pub cultivate_on: BoolParam,
+    /// Cultivate walk size.
+    #[id = "walk"]
+    pub walk: FloatParam,
 
     /// Persisted seed paths so a saved session reloads its sources.
     #[persist = "seed-a-path"]
@@ -104,6 +151,7 @@ impl Default for AkiBloom {
         Self {
             params: Arc::new(AkiBloomParams::default()),
             seeds: Arc::new(parking_lot::RwLock::new(seeds::SeedPair::default())),
+            cultivate: Arc::new(parking_lot::RwLock::new(Cultivate::default())),
             variant: Arc::new(parking_lot::RwLock::new(None)),
             status: Arc::new(Mutex::new(String::new())),
             virtual_note: Arc::new(Mutex::new(None)),
@@ -145,6 +193,47 @@ impl AkiBloomParams {
                     max: 96,
                 },
             ),
+            tune: FloatParam::new(
+                "微调 Tune",
+                0.0,
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
+            )
+            .with_unit(" semi"),
+            tag: EnumParam::new("方向 Tag", VariateTag::Wet),
+            var_amount: FloatParam::new(
+                "变异量 Amount",
+                0.15,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 1.0,
+                },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+            seed: IntParam::new(
+                "Seed 种子",
+                1,
+                IntRange::Linear {
+                    min: 0,
+                    max: i32::MAX,
+                },
+            ),
+            cultivate_on: BoolParam::new("培育模式 Cultivate", false),
+            walk: FloatParam::new(
+                "漫步 Walk",
+                0.3,
+                FloatRange::Linear {
+                    min: 0.05,
+                    max: 1.0,
+                },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
             gain: FloatParam::new(
                 "输出 Output",
                 util::db_to_gain(0.0),
@@ -162,9 +251,25 @@ impl AkiBloomParams {
             seed_b_path: Arc::new(parking_lot::Mutex::new(String::new())),
         }
     }
+
+    /// Root note including fine tuning (fractional semitones).
+    pub fn effective_root(&self) -> f32 {
+        self.root.value() as f32 + self.tune.value()
+    }
 }
 
 impl AkiBloom {
+    /// What the render should vary by: the walker's active state when
+    /// enabled, otherwise the manual hybridize controls (identity at
+    /// amount 0). Testable at lib level like AkiGraft's.
+    pub fn resolve_variate(&self) -> Option<VariateState> {
+        resolve_variate_from(
+            self.params.cultivate_on.value(),
+            manual_variate(&self.params),
+            self.cultivate.read().active(),
+        )
+    }
+
     /// The rendered variant to play this block (cheap `Arc` clone).
     fn current_variant(&self) -> Option<Arc<PlayableVariant>> {
         self.variant.read().clone()
@@ -260,8 +365,7 @@ impl Plugin for AkiBloom {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, .. } => {
-                    let root = self.params.root.value() as u8;
-                    self.voices.note_on(note, velocity, root);
+                    self.voices.note_on(note, velocity, self.params.effective_root());
                 }
                 NoteEvent::NoteOff { note, .. } => {
                     self.voices.note_off(note);
@@ -277,8 +381,7 @@ impl Plugin for AkiBloom {
                 self.voices.note_off(note);
             }
             if let Some(note) = virt {
-                let root = self.params.root.value() as u8;
-                self.voices.note_on(note, 0.9, root);
+                self.voices.note_on(note, 0.9, self.params.effective_root());
             }
             self.last_virtual = virt;
         }
@@ -309,7 +412,37 @@ impl Plugin for AkiBloom {
             self.variant.clone(),
             self.status.clone(),
             self.virtual_note.clone(),
+            self.cultivate.clone(),
         )
+    }
+}
+
+/// Pure variate resolution shared by `AkiBloom::resolve_variate` and the
+/// GUI's render worker: the walker's active state when cultivating, the
+/// manual hybridize state when set, identity otherwise.
+pub fn resolve_variate_from(
+    cultivate_on: bool,
+    manual: Option<VariateState>,
+    active: VariateState,
+) -> Option<VariateState> {
+    if cultivate_on {
+        Some(active)
+    } else {
+        manual.filter(|v| v.amount > 0.0005)
+    }
+}
+
+/// Read the manual hybridize controls off the params (identity at amount 0).
+pub fn manual_variate(params: &AkiBloomParams) -> Option<VariateState> {
+    let amount = params.var_amount.value();
+    if amount > 0.0005 {
+        Some(VariateState {
+            tag: params.tag.value().index(),
+            amount,
+            seed: params.seed.value() as u64,
+        })
+    } else {
+        None
     }
 }
 
@@ -331,3 +464,36 @@ impl Vst3Plugin for AkiBloom {
 
 nih_export_clap!(AkiBloom);
 nih_export_vst3!(AkiBloom);
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    const MANUAL: VariateState = VariateState { tag: 1, amount: 0.4, seed: 123 };
+    const ACTIVE: VariateState = VariateState { tag: 2, amount: 0.3, seed: 42 };
+
+    #[test]
+    fn manual_identity_below_threshold() {
+        let quiet = VariateState { amount: 0.0, ..MANUAL };
+        assert!(resolve_variate_from(false, Some(quiet), ACTIVE).is_none());
+    }
+
+    #[test]
+    fn manual_passes_through_above_threshold() {
+        let v = resolve_variate_from(false, Some(MANUAL), ACTIVE).unwrap();
+        assert_eq!(v, MANUAL);
+    }
+
+    #[test]
+    fn cultivate_overrides_manual() {
+        let v = resolve_variate_from(true, Some(MANUAL), ACTIVE).unwrap();
+        assert_eq!(v, ACTIVE);
+    }
+
+    #[test]
+    fn effective_root_includes_tune() {
+        let p = AkiBloomParams::new();
+        // Default: root 60, tune 0.
+        assert!((p.effective_root() - 60.0).abs() < 1e-6);
+    }
+}

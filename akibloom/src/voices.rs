@@ -56,12 +56,13 @@ impl Voices {
         }
     }
 
-    /// Pitch shift for a note relative to the root (12-TET), pinned by test.
-    pub fn pitch_ratio(note: u8, root: u8) -> f64 {
-        2.0f64.powf((note as i32 - root as i32) as f64 / 12.0)
+    /// Pitch shift for a note relative to the root (12-TET plus the fine
+    /// tune fraction), pinned by test.
+    pub fn pitch_ratio(note: u8, root: f32) -> f64 {
+        2.0f64.powf((note as f32 - root) as f64 / 12.0)
     }
 
-    pub fn note_on(&mut self, note: u8, velocity: f32, root: u8) {
+    pub fn note_on(&mut self, note: u8, velocity: f32, root: f32) {
         // Re-triggering a held note replaces its voice (no duplicate stacks).
         self.kill_note(note);
         let voice = Voice {
@@ -213,16 +214,20 @@ mod tests {
 
     #[test]
     fn pitch_ratio_is_twelve_tet() {
-        assert!((Voices::pitch_ratio(60, 60) - 1.0).abs() < 1e-9);
-        assert!((Voices::pitch_ratio(72, 60) - 2.0).abs() < 1e-9);
-        assert!((Voices::pitch_ratio(48, 60) - 0.5).abs() < 1e-9);
+        assert!((Voices::pitch_ratio(60, 60.0) - 1.0).abs() < 1e-9);
+        assert!((Voices::pitch_ratio(72, 60.0) - 2.0).abs() < 1e-9);
+        assert!((Voices::pitch_ratio(48, 60.0) - 0.5).abs() < 1e-9);
+        // Fine tune: symmetric, and half a semitone is the exact midpoint.
+        // +1 semitone up and −1 down are reciprocals.
+        assert!((Voices::pitch_ratio(61, 60.0) * Voices::pitch_ratio(60, 61.0) - 1.0).abs() < 1e-12);
+        assert!((Voices::pitch_ratio(60, 60.5) - 2.0f64.powf(-0.5 / 12.0)).abs() < 1e-12);
     }
 
     #[test]
     fn voices_are_stolen_oldest_first() {
         let mut voices = Voices::new();
         for note in 60..60 + NUM_VOICES as u8 + 1 {
-            voices.note_on(note, 1.0, 60);
+            voices.note_on(note, 1.0, 60.0);
         }
         let held: Vec<u8> = voices.voices.iter().flatten().map(|v| v.note).collect();
         assert_eq!(held.len(), NUM_VOICES);
@@ -233,8 +238,8 @@ mod tests {
     #[test]
     fn retrigger_replaces_same_note() {
         let mut voices = Voices::new();
-        voices.note_on(64, 1.0, 60);
-        voices.note_on(64, 0.5, 60);
+        voices.note_on(64, 1.0, 60.0);
+        voices.note_on(64, 0.5, 60.0);
         let count = voices
             .voices
             .iter()
@@ -248,7 +253,7 @@ mod tests {
     fn constant_buffer_is_audible_and_finite() {
         let mut voices = Voices::new();
         let var = variant(4096, 0.25);
-        voices.note_on(60, 1.0, 60);
+        voices.note_on(60, 1.0, 60.0);
         // The attack fade (~1 ms) and the gain smoother's 50 ms ramp are both
         // by design; after ~60 ms of blocks the level must be near full.
         for _ in 0..12 {
@@ -269,7 +274,7 @@ mod tests {
     fn note_off_fades_to_silence() {
         let mut voices = Voices::new();
         let var = variant(4096, 0.25);
-        voices.note_on(60, 1.0, 60);
+        voices.note_on(60, 1.0, 60.0);
         let mut l = vec![0.0f32; 256];
         let mut r = vec![0.0f32; 256];
         voices.render_block(&mut [&mut l, &mut r], Some(&var), 1.0, 1.0, 48_000.0);
@@ -293,7 +298,7 @@ mod tests {
     #[test]
     fn no_variant_mixes_silence() {
         let mut voices = Voices::new();
-        voices.note_on(60, 1.0, 60);
+        voices.note_on(60, 1.0, 60.0);
         let mut l = vec![0.0f32; 64];
         let mut r = vec![0.0f32; 64];
         voices.render_block(&mut [&mut l, &mut r], None, 1.0, 1.0, 48_000.0);
