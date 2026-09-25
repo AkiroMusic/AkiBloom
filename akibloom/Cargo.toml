@@ -1,0 +1,29 @@
+[package]
+name = "akibloom"
+version = "0.1.0"
+edition = "2021"
+authors = ["Akiro"]
+license = "GPL-3.0"
+description = "AkiBloom — grow playable timbres from your own samples: graft, hybridize, cultivate"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+# Standalone binary (double-click testing without a DAW). Keeps the default
+# package name because nih_plug_xtask looks for `<package>.exe` when bundling.
+[[bin]]
+name = "akibloom"
+path = "src/main.rs"
+
+# Offline renderer used for DSP verification without a host or GUI.
+[[bin]]
+name = "akibloom_demo"
+path = "src/bin/akibloom_demo.rs"
+
+[dependencies]
+nih_plug = { workspace = true, features = ["standalone"] }
+nih_plug_egui = { workspace = true }
+rustfft = { workspace = true }
+parking_lot = { workspace = true }
+hound = { workspace = true }
+rfd = { workspace = true }

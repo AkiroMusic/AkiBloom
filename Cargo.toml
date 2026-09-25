@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["akibloom", "xtask"]
+
+[workspace.dependencies]
+# Pinned to the exact revision AkiFX and AkiGraft validate against, so all
+# three projects share one known-good nih-plug API and Cargo.lock behavior.
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23", features = ["vst3"] }
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "f36931f7af4646065488a9845d8f8c2f95252c23" }
+rustfft = "6.2"
+parking_lot = "0.12"
+hound = "3.5"
+rfd = "0.15"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
