@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en" data-pack="mint">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AkiBloom — Grow playable timbres from samples</title>
+<meta name="description" content="Grow new playable timbres from your own samples through three organic operations — graft, hybridize, cultivate.">
+<meta property="og:title" content="AkiBloom — Grow playable timbres from samples">
+<meta property="og:description" content="Grow new playable timbres from your own samples through three organic operations — graft, hybridize, cultivate.">
+<meta property="og:url" content="https://akiromusic.github.io/AkiBloom/">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..700&family=IBM+Plex+Mono:wght@400;600&family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/tokens.css">
+
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="aurora-bg"></div>
+<div class="aurora-sweep"></div>
+<div class="star-field"></div>
+<div class="noise-overlay"></div>
+
+<header class="site-nav material-frosted">
+  <a class="brand" href="#"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>AkiBloom</a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#details">Details</a>
+    <a href="https://github.com/AkiroMusic/AkiBloom" class="nav-keep">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <div class="hero-card panel-contrast material-film flow-nebula spring-in">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Instrument Plugin · VST3 / CLAP / Standalone</div>
+      <h1>Aki<span class="grad-text">Bloom</span></h1>
+      <p class="tagline">Grow new playable timbres from your own samples through three organic operations — graft, hybridize, cultivate.</p>
+      <div class="badge-row"><span class="badge">License <b>GPL-3.0</b></span><span class="badge">Platform <b>Windows x64</b></span><span class="badge">Format <b>VST3 · CLAP · Standalone (WASAPI)</b></span><span class="badge">Language <b>Rust · nih-plug</b></span></div>
+      <div class="cta-row">
+          <a class="btn btn-ghost" href="https://github.com/AkiroMusic/AkiBloom">View on GitHub</a>
+          <a class="btn btn-ghost" href="https://github.com/AkiroMusic/AkiBloom">Source code</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="features">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Features</div>
+      <h2>What it does</h2>
+      <p class="sub">AkiBloom is an instrument plugin built on three organic operations: graft one seed&#x27;s timbre toward another, hybridize it along metaphor directions (wet · grainy · breathing), and cultivate it with keep/discard feedback and a walkable timbre map. The interaction framework comes from the research project Botanica-OS, realized with no neural runtime required — pure real-time-safe DSP. Every grown timbre exports as WAV and can be used as a parent in the sibling effect AkiGraft.</p>
+    </div>
+    <div class="feature-grid">
+          <article class="feature-card material-liquid double-bezel spring-in wide" style="animation-delay:80ms"><div class="f-icon">🌱</div><h3>Three organic operations</h3><p>Graft pulls one seed&#x27;s timbre toward another (α = 0 keeps the original sound); hybridize varies it along metaphor directions; cultivate evolves it with your feedback.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:140ms"><div class="f-icon">🎲</div><h3>Deterministic hybridize</h3><p>Pick a direction (wet / grainy / breathing), set the amount, reroll the seed — same seed, same variation, always.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:200ms"><div class="f-icon">🗺️</div><h3>Cultivate + timbre map</h3><p>A walker takes over the variation; audition each mutation on the keys, keep or discard, and the timbre map remembers every step — click any dot to roll back to it.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:260ms"><div class="f-icon">🎹</div><h3>Playable</h3><p>Click the on-screen keyboard (C3–C5) or plug in a MIDI keyboard; set the native pitch root (C4 = 60) and ±1 semitone fine tune.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:320ms"><div class="f-icon">💾</div><h3>WAV export</h3><p>Export the current timbre as WAV, ready to drop into the sibling AkiGraft effect as a parent — the two plugins form one closed workflow.</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:380ms"><div class="f-icon">⚡</div><h3>Real-time-safe DSP</h3><p>No neural runtime required — pure DSP. Loads two of your own WAV seeds (16/24/32-bit, mono or stereo; longer than 10 s is trimmed).</p></article>
+    </div>
+  </section>
+
+  
+
+  <section class="block" id="details">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Details</div>
+      <h2>Controls</h2>
+    </div>
+    <div class="detail-card material-liquid double-bezel"><table class="detail-table"><thead><tr><th>Control</th><th>What it does</th></tr></thead><tbody><tr><td>源 Source A/B</td><td>Which seed is the played source; the other donates its timbre</td></tr><tr><td>生长量 Grow α</td><td>How far the source is pulled toward the donor (0 = original)</td></tr><tr><td>方向 / 变异量 / 种子</td><td>Hybridize direction, depth, deterministic seed</td></tr><tr><td>培育 Cultivate</td><td>Walker takes over the variation; keep/discard + map rollback</td></tr><tr><td>根音 Root / 微调 Tune</td><td>Native pitch note (C4 = 60) and ±1 semitone fine tune</td></tr><tr><td>输出 Output</td><td>Output level</td></tr></tbody></table></div>
+  </section>
+
+  <section class="block" id="quick-start">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>Quick Start</div>
+      <h2>Grow your first timbre</h2>
+    </div>
+    <div class="qs-grid">
+      <div class="qs-steps material-liquid double-bezel spring-in">
+        <ol><li><b>Load</b> two of your own WAV samples as seeds (16/24/32-bit, mono or stereo; longer than 10 s is trimmed).</li><li>Drag <b>Grow α</b> — the source seed is pulled toward the other seed's timbre; α = 0 keeps the original sound.</li><li><b>Play</b> the on-screen keyboard (C3–C5) or plug in a MIDI keyboard.</li><li><b>Hybridize</b>: pick a direction (wet / grainy / breathing), set the amount, reroll the seed — same seed, same variation.</li><li><b>Cultivate</b>: audition each mutation, keep or discard, roll back anywhere on the map — then <b>export</b> the timbre as WAV.</li></ol>
+      </div>
+      <div class="code-card panel-contrast spring-in" style="animation-delay:80ms">
+        <div class="code-title"><span class="dot"></span>shell — build from source</div>
+        <pre>cargo test --release
+cargo xtask bundle akibloom --release   # VST3 + CLAP + standalone
+python scripts/verify_render.py         # offline render self-test</pre>
+      </div>
+    </div>
+  </section>
+
+  
+
+  <div class="hairline"></div>
+
+  <section class="block i18n-cn" id="中文" lang="zh-CN">
+    <div class="block-head">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>乐器插件 · VST3 / CLAP / 独立运行</div>
+      <h2>项目简介</h2>
+      <p class="sub">AkiBloom 是一件建立在三种「有机化操作」上的乐器插件：把一颗种子的音色向另一颗嫁接拉拢，沿隐喻方向（湿润 · 颗粒 · 呼吸感）做杂交变异，再以保留/丢弃反馈与可游走的音色地图加以培育。交互框架来自研究项目 Botanica-OS 的产品化落地——无需神经网络运行时，纯实时安全 DSP。长好的音色可一键导出 WAV，直接当作姊妹效果器 AkiGraft 的母本。</p>
+    </div>
+    <div class="feature-grid">
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:80ms"><div class="f-icon">🌱</div><h3>三种有机化操作</h3><p>嫁接把一颗种子的音色向另一颗拉拢（α = 0 保持原声）；杂交沿隐喻方向做变异；培育以你的反馈引导演化。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:140ms"><div class="f-icon">🎲</div><h3>确定性杂交</h3><p>选方向（湿润 / 颗粒 / 呼吸感）、推变异量、换种子——同一种子永远得到同一个变异。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:200ms"><div class="f-icon">🗺️</div><h3>培育与音色地图</h3><p>演化交给 walker；在琴键上试听每个变异，👍保留或✗丢弃，地图记住每一步——点击任意圆点即可回溯。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:260ms"><div class="f-icon">🎹</div><h3>可演奏</h3><p>点击界面琴键（C3–C5）或接入 MIDI 键盘；设定本调根音（C4 = 60）与 ±1 半音微调。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:320ms"><div class="f-icon">💾</div><h3>WAV 导出</h3><p>把当前音色导出为 WAV，可直接拖入姊妹效果器 AkiGraft 当母本——两件插件构成一个完整闭环。</p></article>
+          <article class="feature-card material-liquid double-bezel spring-in" style="animation-delay:380ms"><div class="f-icon">⚡</div><h3>实时安全 DSP</h3><p>无需神经网络运行时，纯 DSP。加载两颗你自己的 WAV 采样作种子（16/24/32bit，单声道或立体声；超 10 秒自动截取）。</p></article>
+    </div>
+    <div class="block-head" style="margin-top:var(--space-8)">
+      <div class="eyebrow"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>明细</div>
+      <h2>控制项</h2>
+    </div>
+    <div class="detail-card material-liquid double-bezel"><table class="detail-table"><thead><tr><th>控制项</th><th>作用</th></tr></thead><tbody><tr><td>源 Source A/B</td><td>决定演奏的源种子；另一种子贡献其音色</td></tr><tr><td>生长量 Grow α</td><td>源向供体音色靠拢的程度（0 = 原声）</td></tr><tr><td>方向 / 变异量 / 种子</td><td>杂交方向、深度与确定性种子</td></tr><tr><td>培育 Cultivate</td><td>演化交给 walker；保留/丢弃 + 地图回溯</td></tr><tr><td>根音 Root / 微调 Tune</td><td>本调音高（C4 = 60）与 ±1 半音微调</td></tr><tr><td>输出 Output</td><td>输出电平</td></tr></tbody></table></div>
+    <div class="qs-grid" style="margin-top:var(--space-8)">
+      <div class="qs-steps material-liquid double-bezel spring-in">
+        <ol><li><b>加载</b>两颗你自己的 wav 采样作种子（16/24/32bit，单声道或立体声；超 10 秒自动截取）。</li><li>推<b>生长量 α</b>——源种子向另一种子的音色靠拢；α = 0 保持原声。</li><li><b>演奏</b>：点击界面琴键（C3–C5）或接入 MIDI 键盘。</li><li><b>杂交</b>：选方向（湿润/颗粒/呼吸感）、推变异量、换种子——同一种子永远得到同一个变异。</li><li><b>培育</b>：试听每个变异，保留或丢弃，在地图上任意回溯——最后把音色<b>导出</b>为 WAV。</li></ol>
+      </div>
+      <div class="code-card panel-contrast spring-in" style="animation-delay:80ms">
+        <div class="code-title"><span class="dot"></span>shell — build from source</div>
+        <pre>cargo test --release
+cargo xtask bundle akibloom --release   # VST3 + CLAP + standalone
+python scripts/verify_render.py         # offline render self-test</pre>
+      </div>
+    </div>
+  </section>
+
+  
+
+  <footer class="site-footer">
+    <div class="footer-row material-liquid">
+      <div>
+        <a class="brand" href="#"><span class="star"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c.9 6.5 4.6 10.2 12 12-7.4 1.8-11.1 5.5-12 12-.9-6.5-4.6-10.2-12-12C7.4 10.2 11.1 6.5 12 0z"/></svg></span>AkiBloom</a>
+        <p class="footer-meta" style="margin-top:var(--space-3);max-width:340px">Grow new playable timbres from your own samples through three organic operations — graft, hybridize, cultivate.</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/AkiroMusic/AkiBloom">Source code ↗</a>
+      </div>
+      <div class="footer-links">
+        <a href="https://akiromusic.com/">akiromusic.com ↗</a>
+        <a href="https://github.com/AkiroMusic">GitHub Profile ↗</a>
+        <a href="https://akiromusic.github.io/AkiroMusic/">All project sites ↗</a>
+      </div>
+    </div>
+    <p class="footer-meta">© 2026 Akiro · GPL-3.0 licensed. Built with the Aurora Glass design system.</p>
+  </footer>
+
+</main>
+</body>
+</html>
