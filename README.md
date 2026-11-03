@@ -1,5 +1,6 @@
 # AkiBloom — Timbre-Growing Instrument / 音色生长乐器
 
+[![Website](https://img.shields.io/badge/site-akiromusic.github.io-6D82FF)](https://akiromusic.github.io/AkiBloom/)
 **English** | [中文](#中文)
 
 Grow new playable timbres from your own samples. AkiBloom is an instrument
